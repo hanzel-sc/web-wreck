@@ -15,6 +15,10 @@ const IGNORE_DIRS = new Set([
   'coverage',
   '.next',
   'out',
+  'frontend',
+  'public',
+  'static',
+  'assets'
 ]);
 
 // File extensions to collect
