@@ -69,7 +69,8 @@ async function main() {
     }
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
-    const htmlPath = path.join(outputDir, `report-${timestamp}.html`);
+    const fileid = Math.random().toString(36).substring(2, 8);
+    const htmlPath = path.join(outputDir, `report-${timestamp}-${fileid}.html`);
     fs.writeFileSync(htmlPath, htmlOutput, 'utf-8');
 
     console.log('\n=== JSON Output ===');
