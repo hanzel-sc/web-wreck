@@ -117,6 +117,15 @@ export function extractExpressRoutes(
       const handlers = node.arguments.slice(1);
       if (handlers.length === 0) return;
 
+      const globalMiddleware: FunctionReference[] = [];
+
+      if(method === 'use' && handlers.length > 0) {
+        handlers.forEach(h => {
+          const ref = extractFunctionReference(h);
+          globalMiddleware.push(ref);
+        }
+        )};
+
       const middleware: FunctionReference[] = [];
       let handler: FunctionReference | null = null;
 

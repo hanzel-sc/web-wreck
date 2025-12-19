@@ -61,6 +61,7 @@ export function buildExecutionGraph(
         edges.push({
           from: nodeIds[i],
           to: nodeIds[i + 1],
+          condition: 'always',
         });
       }
 
