@@ -77,22 +77,22 @@ The analysis engine is framework-agnostic by design and will be extended increme
 ## Roadmap
 
 ### Phase 1 — Core Flow Extraction (In Progress)
-- [ ] Clone and index public GitHub repositories
-- [ ] Traverse project directories and collect JS/TS source files
-- [ ] Parse source files into ASTs using Babel
-- [ ] Detect Express-style route definitions
-- [ ] Extract middleware and controller execution chains
-- [ ] Build a directed execution graph (route → middleware → controller)
-- [ ] Identify authentication-related middleware using heuristics
-- [ ] Flag routes without authentication
-- [ ] Output execution graph as structured JSON
+- [x] Clone and index public GitHub repositories
+- [x] Traverse project directories and collect JS/TS source files
+- [x] Parse source files into ASTs using Babel
+- [x] Detect Express-style route definitions
+- [x] Extract middleware and controller execution chains
+- [x] Build a directed execution graph (route → middleware → controller)
+- [x] Identify authentication-related middleware using heuristics
+- [x] Flag routes without authentication
+- [x] Output execution graph as structured JSON
 
 ### Phase 2 — Visualization
-- [ ] Define graph export format (framework-agnostic)
-- [ ] Render execution graphs using Mermaid or Cytoscape
-- [ ] Visually highlight unauthenticated and weakly protected routes
-- [ ] Add basic graph navigation (zoom, pan)
-- [ ] Add legend and flow indicators
+- [x] Define graph export format (framework-agnostic)
+- [x] Render execution graphs using Mermaid or Cytoscape or D3.js
+- [x] Visually highlight unauthenticated and weakly protected routes
+- [x] Add basic graph navigation (zoom, pan)
+- [x] Add legend and flow indicators
 
 ### Phase 3 — Authentication Semantics
 - [ ] Detect JWT verification usage
