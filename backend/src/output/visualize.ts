@@ -459,7 +459,7 @@ export function outputHtml(graph: ExecutionGraph, analysis: AuthAnalysis): strin
         <div class="stat-label">Auth Middleware</div>
       </div>
       <div class="stat-card vulnerable">
-        <div class="stat-value">${analysis.unauthenticatedRoutes.length}</div>
+        <div class="stat-value">${analysis.unauthenticated.length}</div>
         <div class="stat-label">Vulnerable Routes</div>
       </div>
     </div>
@@ -760,7 +760,7 @@ export function outputHtml(graph: ExecutionGraph, analysis: AuthAnalysis): strin
  * Generate D3.js hierarchical data structure
  */
 function generateD3GraphData(graph: ExecutionGraph, analysis: AuthAnalysis): string {
-  const unauthSet = new Set(analysis.unauthenticatedRoutes);
+  const unauthSet = new Set(analysis.unauthenticated);
   const authSet = new Set(analysis.authNodes);
   
   // Build hierarchical structure
@@ -836,7 +836,7 @@ function generateRoutesSummary(graph: ExecutionGraph, analysis: AuthAnalysis): s
     `;
   }
   
-  const unauthSet = new Set(analysis.unauthenticatedRoutes);
+  const unauthSet = new Set(analysis.unauthenticated);
   
   const rows = graph.routes
     .map(route => {

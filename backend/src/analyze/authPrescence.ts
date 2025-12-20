@@ -1,109 +1,120 @@
 /**
- * Authentication presence analysis
- * Heuristically identifies auth-related middleware and unprotected routes
+ * Phase 3 Authentication & Authorization Analysis
  *
- * NOTE:
- * - This pass annotates node metadata (isAuthRelated)
- * - It does NOT modify graph structure
+ * Analyzes execution chains for:
+ * - Missing authentication
+ * - Incorrect auth ordering
+ * - Optional / conditional auth
+ * - Missing RBAC on privileged routes
+ *
+ * This module DOES NOT:
+ * - Use string heuristics
+ * - Modify graph structure
+ * - Infer auth from imports
  */
 
-import type { ExecutionGraph } from '../ir/types.js';
+import type {
+  ExecutionGraph,
+  ExecutionNode,
+  Route
+} from '../ir/types.js';
 
 export interface AuthAnalysis {
+  unauthenticated: string[];
+  authAfterHandler: string[];
+  optionalAuth: string[];
+  conditionalAuth: string[];
+  missingRBAC: string[];
   authNodes: string[];
-  unauthenticatedRoutes: string[];
 }
-
-const AUTH_KEYWORDS = [
-  'auth',
-  'verify',
-  'token',
-  'jwt',
-  'passport',
-  'authorize',
-  'authenticate',
-];
-
-const AUTH_LIBRARIES = [
-  'jsonwebtoken',
-  'passport',
-  'express-jwt',
-  'jwt-simple',
-  '@auth0',
-];
 
 export function analyzeAuthPresence(graph: ExecutionGraph): AuthAnalysis {
-  const authNodes = new Set<string>();
+  const findings: AuthAnalysis = {
+    unauthenticated: [],
+    authAfterHandler: [],
+    optionalAuth: [],
+    conditionalAuth: [],
+    missingRBAC: [],
+    authNodes: [],
+  };
 
-  // Precompute adjacency list once
   const adjacency = buildAdjacency(graph);
 
-  // Identify auth-related nodes
-  for (const [nodeId, node] of graph.nodes) {
-    if (
-      isAuthRelated(
-        node.name,
-        node.metadata.fileImports,
-        node.metadata.referencesUser
-      )
-    ) {
-      authNodes.add(nodeId);
-      node.metadata.isAuthRelated = true; // annotation
-    }
-  }
-
-  // Identify unauthenticated routes
-  const unauthenticatedRoutes: string[] = [];
-
   for (const route of graph.routes) {
-    const chain = getExecutionChain(adjacency, route.entryNodeId);
-    const hasAuth = chain.some(nodeId => authNodes.has(nodeId));
+    const chain = getOrderedExecutionChain(
+      graph,
+      adjacency,
+      route.entryNodeId
+    );
 
-    if (!hasAuth) {
-      unauthenticatedRoutes.push(route.id);
+    analyzeRouteChain(route, chain, findings);
+  }
+
+  return findings;
+}
+
+/* ------------------------------------------------------------------ */
+/* Route Analysis                                                      */
+/* ------------------------------------------------------------------ */
+
+function analyzeRouteChain(
+  route: Route,
+  chain: ExecutionNode[],
+  findings: AuthAnalysis
+) {
+  const authNodes = chain.filter(n => n.type === 'auth');
+  const handlerIndex = chain.findIndex(n => n.type === 'handler');
+
+  // No auth anywhere → unauthenticated route
+  if (authNodes.length === 0) {
+    findings.unauthenticated.push(route.id);
+    return;
+  }
+
+  for (const authNode of authNodes) {
+    const authIndex = chain.indexOf(authNode);
+
+    // Auth runs after handler → dead auth
+    if (handlerIndex !== -1 && authIndex > handlerIndex) {
+      findings.authAfterHandler.push(route.id);
+    }
+
+    // Optional auth (does not block)
+    if (authNode.metadata.enforcement === 'optional') {
+      findings.optionalAuth.push(route.id);
+    }
+
+    // Conditional auth (if (req.user))
+    if (authNode.metadata.enforcement === 'conditional') {
+      findings.conditionalAuth.push(route.id);
+    }
+
+    // RBAC check for privileged routes
+    if (
+      isPrivilegedRoute(route) &&
+      (!authNode.metadata.rolesChecked ||
+        authNode.metadata.rolesChecked.length === 0)
+    ) {
+      findings.missingRBAC.push(route.id);
     }
   }
+}
 
-  return {
-    authNodes: Array.from(authNodes),
-    unauthenticatedRoutes,
-  };
+/* ------------------------------------------------------------------ */
+/* Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+function isPrivilegedRoute(route: Route): boolean {
+  const path = route.path.toLowerCase();
+  return (
+    path.includes('admin') ||
+    path.includes('internal') ||
+    path.includes('manage')
+  );
 }
 
 /**
- * Determine if a node is auth-related using heuristics
- */
-function isAuthRelated(
-  name: string,
-  fileImports: string[],
-  referencesUser: boolean
-): boolean {
-  const lowerName = name.toLowerCase();
-
-  // Name-based heuristic
-  if (AUTH_KEYWORDS.some(kw => lowerName.includes(kw))) {
-    return true;
-  }
-
-  // req.user heuristic
-  if (referencesUser) {
-    return true;
-  }
-
-  // Import-based heuristic (coarse, v0)
-  if (
-    fileImports.some(imp =>
-      AUTH_LIBRARIES.some(lib => imp.includes(lib))
-    )
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Build adjacency list for graph traversal
+ * Build adjacency list (directed)
  */
 function buildAdjacency(graph: ExecutionGraph): Map<string, string[]> {
   const adjacency = new Map<string, string[]>();
@@ -120,26 +131,32 @@ function buildAdjacency(graph: ExecutionGraph): Map<string, string[]> {
 }
 
 /**
- * BFS traversal to collect execution chain
+ * Ordered DFS traversal
+ * Preserves execution order (critical for auth ordering analysis)
  */
-function getExecutionChain(
+function getOrderedExecutionChain(
+  graph: ExecutionGraph,
   adjacency: Map<string, string[]>,
   startNodeId: string
-): string[] {
+): ExecutionNode[] {
   const visited = new Set<string>();
-  const queue: string[] = [startNodeId];
+  const result: ExecutionNode[] = [];
 
-  while (queue.length > 0) {
-    const nodeId = queue.shift()!;
-    if (visited.has(nodeId)) continue;
-
+  function dfs(nodeId: string) {
+    if (visited.has(nodeId)) return;
     visited.add(nodeId);
+
+    const node = graph.nodes.get(nodeId);
+    if (node) {
+      result.push(node);
+    }
 
     const neighbors = adjacency.get(nodeId) ?? [];
     for (const next of neighbors) {
-      queue.push(next);
+      dfs(next);
     }
   }
 
-  return Array.from(visited);
+  dfs(startNodeId);
+  return result;
 }

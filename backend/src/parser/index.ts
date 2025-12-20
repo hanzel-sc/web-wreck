@@ -27,6 +27,9 @@ export interface FunctionReference {
   type: 'inline' | 'identifier' | 'unknown';
   isAsync: boolean;
   referencesUser: boolean;
+  callsNext: boolean;
+  conditionalAuth: boolean;
+  rolesChecked: string[];
 }
 
 export async function parseFiles(

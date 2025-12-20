@@ -3,8 +3,8 @@
  * Builds framework-agnostic execution graph (DAG)
  */
 
-import type { ParsedFile } from '../parser/index.js';
-import type { ExecutionGraph, Route, ExecutionNode, Edge } from './types.js';
+import type { ParsedFile, FunctionReference } from '../parser/index.js';
+import type { ExecutionGraph, Route, ExecutionNode, Edge, NodeKind } from './types.js';
 
 let nodeCounter = 0;
 
@@ -23,36 +23,43 @@ export function buildExecutionGraph(
 
       // Middleware nodes
       for (const mw of routeDef.middleware) {
-        const nodeId = createNode(nodes, 'middleware', mw.name, {
+        const { kind, authType } = classifyNode(mw, false);
+
+        const nodeId = createNode(nodes, kind, mw.name, {
           isAsync: mw.isAsync,
           referencesUser: mw.referencesUser,
           fileImports: routeDef.fileImports,
-          isAuthRelated: false,
           sourceLocation: {
             filePath: routeDef.filePath,
             line: routeDef.line,
           },
+          authType,
+          enforcement: mw.referencesUser ? 'hard' : 'optional',
         });
+
 
         nodeIds.push(nodeId);
       }
 
       // Handler node
+      const handlerClass = classifyNode(routeDef.handler, true);
+
       const handlerNodeId = createNode(
         nodes,
-        'handler',
+        handlerClass.kind,
         routeDef.handler.name,
         {
           isAsync: routeDef.handler.isAsync,
           referencesUser: routeDef.handler.referencesUser,
           fileImports: routeDef.fileImports,
-          isAuthRelated: false,
           sourceLocation: {
             filePath: routeDef.filePath,
             line: routeDef.line,
           },
+          authType: handlerClass.authType,
         }
       );
+
 
       nodeIds.push(handlerNodeId);
 
@@ -65,7 +72,6 @@ export function buildExecutionGraph(
         });
       }
 
-      // Route entry
       const routeId = `route_${routes.length}`;
       routes.push({
         id: routeId,
@@ -83,9 +89,29 @@ export function buildExecutionGraph(
   return { routes, nodes, edges };
 }
 
+
+function classifyNode(
+  ref: FunctionReference,
+  isHandler: boolean
+): { kind: NodeKind; authType?: 'entry' | 'enforcer' } {
+
+  const name = ref.name.toLowerCase();
+
+  if (isHandler && (name.includes('login') || name.includes('register'))) {
+    return { kind: 'auth', authType: 'entry' };
+  }
+
+  if (name.includes('auth') || name.includes('verify') || name.includes('jwt')) {
+    return { kind: 'auth', authType: 'enforcer' };
+  }
+
+  return { kind: isHandler ? 'handler' : 'middleware' };
+}
+
+
 function createNode(
   nodes: Map<string, ExecutionNode>,
-  type: 'middleware' | 'handler',
+  type: NodeKind,
   name: string,
   metadata: ExecutionNode['metadata']
 ): string {
@@ -93,3 +119,4 @@ function createNode(
   nodes.set(id, { id, type, name, metadata });
   return id;
 }
+

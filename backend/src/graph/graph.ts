@@ -12,7 +12,7 @@ import type { AuthAnalysis } from '../analyze/authPrescence.js';
 export function outputMermaid(graph: ExecutionGraph, analysis: AuthAnalysis): string {
   const lines: string[] = [];
   const authSet = new Set(analysis.authNodes);
-  const unauthRoutes = new Set(analysis.unauthenticatedRoutes);
+  const unauthRoutes = new Set(analysis.unauthenticated);
   
   lines.push('graph TD');
   

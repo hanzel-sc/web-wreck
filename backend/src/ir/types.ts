@@ -23,33 +23,33 @@ export interface Route {
   sourceLocation: SourceLocation;
 }
 
-export type NodeKind = 'middleware' | 'handler' | 'auth' | 'route';
-export type AuthEnforcement = 'hard' | 'optional' | 'conditional';
-
-
 /**
  * Metadata attached to nodes for analysis
  */
+
+export type NodeKind = 'middleware' | 'handler' | 'auth' | 'route';
+export type AuthEnforcement = 'hard' | 'optional' | 'conditional';
 
 export interface NodeMetadata {
   isAsync: boolean;
   referencesUser: boolean;
   fileImports: string[];
-  isAuthRelated: boolean; // Populated by analysis pass
-  authType?: 'entry' | 'enforcer';// Optional auth role
+
+  // Phase 3 auth semantics
+  authType?: 'entry' | 'enforcer';
   enforcement?: AuthEnforcement;
+  rolesChecked?: string[];
+
   sourceLocation: SourceLocation;
 }
 
-/**
- * A node in the execution graph (middleware or handler)
- */
 export interface ExecutionNode {
   id: string;
-  type: NodeKind;
+  type: NodeKind; // keep name 'type' to minimize refactors
   name: string;
   metadata: NodeMetadata;
 }
+
 
 
 /**

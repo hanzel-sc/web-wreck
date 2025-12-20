@@ -69,6 +69,9 @@ function extractFunctionReference(node: t.Node): FunctionReference {
       type: 'inline',
       isAsync: !!node.async,
       referencesUser: containsReqUser(node),
+      callsNext: detectNextCall(node),
+      conditionalAuth: detectConditionalAuth(node),
+      rolesChecked: extractRoles(node),
     };
   }
 
@@ -78,6 +81,9 @@ function extractFunctionReference(node: t.Node): FunctionReference {
       type: 'identifier',
       isAsync: false,
       referencesUser: false,
+      callsNext: false,
+      conditionalAuth: false,
+      rolesChecked: [],
     };
   }
 
@@ -86,7 +92,61 @@ function extractFunctionReference(node: t.Node): FunctionReference {
     type: 'unknown',
     isAsync: false,
     referencesUser: false,
+    callsNext: false,
+    conditionalAuth: false,
+    rolesChecked: [],
   };
+}
+
+function detectNextCall(fn: t.Function): boolean {
+  let found = false;
+
+  t.traverseFast(fn.body, node => {
+    if (
+      t.isCallExpression(node) &&
+      t.isIdentifier(node.callee, { name: 'next' })
+    ) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+function detectConditionalAuth(fn: t.Function): boolean {
+  let found = false;
+  t.traverseFast(fn.body, node => {
+    if (t.isIfStatement(node)) {
+      const test = node.test;
+      if (
+        t.isMemberExpression(test) &&
+        t.isIdentifier(test.object, { name: 'req' }) &&
+        t.isIdentifier(test.property, { name: 'user' })
+      ) {
+        found = true;
+      }
+    }
+  });
+
+  return found;
+}
+
+function extractRoles(fn: t.Function): string[] {
+  const roles: Set<string> = new Set(); 
+
+  t.traverseFast(fn.body, node => {
+    if (
+      t.isCallExpression(node) &&
+      t.isMemberExpression (node.callee) &&
+      t.isIdentifier(node.callee.object, { name: 'req' }) &&
+      t.isIdentifier(node.callee.property, { name: 'user' }) &&
+      t.isIdentifier(node.callee.property, { name: 'role' })
+    ) {
+      roles.add('role');
+        }
+      });
+
+      return [...roles]
+
 }
 
 

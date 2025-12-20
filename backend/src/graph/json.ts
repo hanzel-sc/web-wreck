@@ -34,14 +34,14 @@ export interface JsonOutput {
  * Generate structured JSON output
  */
 export function outputJson(graph: ExecutionGraph, analysis: AuthAnalysis): JsonOutput {
-  const unauthSet = new Set(analysis.unauthenticatedRoutes);
+  const unauthSet = new Set(analysis.unauthenticated);
   
   return {
     summary: {
       totalRoutes: graph.routes.length,
       totalNodes: graph.nodes.size,
       authNodes: analysis.authNodes.length,
-      unauthenticatedRoutes: analysis.unauthenticatedRoutes.length,
+      unauthenticatedRoutes: analysis.unauthenticated.length,
     },
     routes: graph.routes.map(r => ({
       id: r.id,

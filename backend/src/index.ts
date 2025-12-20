@@ -55,7 +55,7 @@ async function main() {
     // Phase 4: Analysis
     log.phase('Security Analysis');
     const analysis = analyzeAuthPresence(graph);
-    log.success(`Found ${analysis.unauthenticatedRoutes.length} unauthenticated routes`);
+    log.success(`Found ${analysis.unauthenticated.length} unauthenticated routes`);
     
     // Phase 5: Output
     log.phase('Output Generation');
