@@ -20,6 +20,7 @@ export interface Route {
   method: string;
   path: string;
   entryNodeId: string;
+  //executionChain: string[];
   sourceLocation: SourceLocation;
 }
 
