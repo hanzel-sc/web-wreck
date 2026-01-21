@@ -1,6 +1,6 @@
 /**
- * Parsing orchestrator
- * Compiler-style frontend coordinator
+ * Parsing orchestrator - Phase 3 Enhanced
+ * Compiler-style frontend coordinator with auth semantics
  */
 
 import { parseFileToAST } from './ast.js';
@@ -22,14 +22,30 @@ export interface RouteDefinition {
   fileImports: string[];
 }
 
+/**
+ * Phase 3: Enhanced function reference with auth semantics
+ */
 export interface FunctionReference {
   name: string;
   type: 'inline' | 'identifier' | 'unknown';
   isAsync: boolean;
+  
+  // Basic auth detection
   referencesUser: boolean;
   callsNext: boolean;
+  
+  // Phase 3: Conditional auth patterns
   conditionalAuth: boolean;
+  
+  // Phase 3: RBAC detection
   rolesChecked: string[];
+  
+  // Phase 3: JWT verification
+  hasJWTVerification: boolean;
+  jwtVerifyMethod: string | null;
+  
+  // Phase 3: Error handling
+  hasErrorHandling: boolean;
 }
 
 export async function parseFiles(

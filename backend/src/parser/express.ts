@@ -1,6 +1,6 @@
 /**
- * Express route extraction
- * Compiler-style frontend for Express routing
+ * Express route extraction - Enhanced for Phase 3
+ * Compiler-style frontend for Express routing with deep semantic analysis
  */
 
 import traverse from '@babel/traverse';
@@ -23,14 +23,35 @@ const HTTP_METHODS = new Set([
   'all',
 ]);
 
+// Phase 3: JWT library detection patterns
+const JWT_LIBRARIES = new Set([
+  'jsonwebtoken',
+  'express-jwt',
+  'jwt-simple',
+  '@auth0/express-jwt',
+  'passport-jwt',
+]);
+
+// Phase 3: Common JWT validation patterns
+const JWT_VERIFY_PATTERNS = [
+  'verify',
+  'decode',
+  'validateToken',
+  'verifyToken',
+  'checkToken',
+];
+
+/**
+ * Extract all imports and requires from a file
+ */
 function extractImports(ast: File): string[] {
   const imports: string[] = [];
 
   traverseFn(ast, {
-    ImportDeclaration(path) {
+    ImportDeclaration(path: any) {
       imports.push(path.node.source.value);
     },
-    CallExpression(path) {
+    CallExpression(path: any) {
       const { node } = path;
       if (
         t.isIdentifier(node.callee, { name: 'require' }) &&
@@ -45,6 +66,9 @@ function extractImports(ast: File): string[] {
   return imports;
 }
 
+/**
+ * Phase 3: Detect if function references req.user
+ */
 function containsReqUser(fn: t.Function): boolean {
   let found = false;
 
@@ -61,17 +85,212 @@ function containsReqUser(fn: t.Function): boolean {
   return found;
 }
 
+/**
+ * Phase 3: Detect next() calls - critical for middleware ordering
+ */
+function detectNextCall(fn: t.Function): boolean {
+  let hasNext = false;
 
-function extractFunctionReference(node: t.Node): FunctionReference {
+  t.traverseFast(fn.body, node => {
+    if (
+      t.isCallExpression(node) &&
+      t.isIdentifier(node.callee, { name: 'next' })
+    ) {
+      hasNext = true;
+    }
+  });
+
+  return hasNext;
+}
+
+/**
+ * Phase 3: Detect conditional authentication (if (req.user) pattern)
+ */
+function detectConditionalAuth(fn: t.Function): boolean {
+  let found = false;
+
+  t.traverseFast(fn.body, node => {
+    if (t.isIfStatement(node)) {
+      const test = node.test;
+      
+      // Pattern: if (req.user)
+      if (
+        t.isMemberExpression(test) &&
+        t.isIdentifier(test.object, { name: 'req' }) &&
+        t.isIdentifier(test.property, { name: 'user' })
+      ) {
+        found = true;
+      }
+      
+      // Pattern: if (!req.user)
+      if (
+        t.isUnaryExpression(test, { operator: '!' }) &&
+        t.isMemberExpression(test.argument) &&
+        t.isIdentifier(test.argument.object, { name: 'req' }) &&
+        t.isIdentifier(test.argument.property, { name: 'user' })
+      ) {
+        found = true;
+      }
+    }
+  });
+
+  return found;
+}
+
+/**
+ * Phase 3: Extract role checks from middleware
+ * Detects patterns like:
+ * - req.user.role
+ * - req.user.roles.includes()
+ * - Array.from(req.user.permissions)
+ */
+function extractRoles(fn: t.Function): string[] {
+  const roles: Set<string> = new Set();
+
+  t.traverseFast(fn.body, node => {
+    // Pattern: req.user.role === 'admin'
+    if (
+      t.isMemberExpression(node) &&
+      t.isMemberExpression(node.object) &&
+      t.isIdentifier(node.object.object, { name: 'req' }) &&
+      t.isIdentifier(node.object.property, { name: 'user' }) &&
+      t.isIdentifier(node.property)
+    ) {
+      const roleProp = node.property.name;
+      if (
+        roleProp === 'role' ||
+        roleProp === 'roles' ||
+        roleProp === 'permissions' ||
+        roleProp === 'authorities'
+      ) {
+        roles.add(roleProp);
+      }
+    }
+
+    // Pattern: roles.includes('admin')
+    if (
+      t.isCallExpression(node) &&
+      t.isMemberExpression(node.callee) &&
+      t.isIdentifier(node.callee.property, { name: 'includes' }) &&
+      node.arguments.length > 0 &&
+      t.isStringLiteral(node.arguments[0])
+    ) {
+      roles.add(node.arguments[0].value);
+    }
+  });
+
+  return Array.from(roles);
+}
+
+/**
+ * Phase 3: Detect JWT verification in middleware
+ */
+function detectJWTVerification(fn: t.Function, fileImports: string[]): {
+  hasJWT: boolean;
+  verifyMethod: string | null;
+} {
+  let hasJWT = false;
+  let verifyMethod: string | null = null;
+
+  // Check if file imports JWT library
+  const hasJWTImport = fileImports.some(imp => 
+    JWT_LIBRARIES.has(imp) || imp.includes('jwt')
+  );
+
+  if (!hasJWTImport) {
+    return { hasJWT: false, verifyMethod: null };
+  }
+
+  // Look for JWT verification calls
+  t.traverseFast(fn.body, node => {
+    if (t.isCallExpression(node)) {
+      // Pattern: jwt.verify()
+      if (
+        t.isMemberExpression(node.callee) &&
+        t.isIdentifier(node.callee.object, { name: 'jwt' }) &&
+        t.isIdentifier(node.callee.property)
+      ) {
+        const method = node.callee.property.name;
+        if (JWT_VERIFY_PATTERNS.includes(method)) {
+          hasJWT = true;
+          verifyMethod = method;
+        }
+      }
+
+      // Pattern: verify() direct call
+      if (t.isIdentifier(node.callee)) {
+        const method = node.callee.name;
+        if (JWT_VERIFY_PATTERNS.includes(method)) {
+          hasJWT = true;
+          verifyMethod = method;
+        }
+      }
+    }
+  });
+
+  return { hasJWT, verifyMethod };
+}
+
+/**
+ * Phase 3: Detect error handling in auth middleware
+ */
+function hasErrorHandling(fn: t.Function): boolean {
+  let hasHandler = false;
+
+  t.traverseFast(fn.body, node => {
+    // Try-catch blocks
+    if (t.isTryStatement(node)) {
+      hasHandler = true;
+    }
+
+    // Error responses (res.status(401/403))
+    if (
+      t.isCallExpression(node) &&
+      t.isMemberExpression(node.callee) &&
+      t.isCallExpression(node.callee.object) &&
+      t.isMemberExpression(node.callee.object.callee) &&
+      t.isIdentifier(node.callee.object.callee.object, { name: 'res' }) &&
+      t.isIdentifier(node.callee.object.callee.property, { name: 'status' })
+    ) {
+      const statusArg = node.callee.object.arguments[0];
+      if (
+        t.isNumericLiteral(statusArg) &&
+        (statusArg.value === 401 || statusArg.value === 403)
+      ) {
+        hasHandler = true;
+      }
+    }
+  });
+
+  return hasHandler;
+}
+
+/**
+ * Phase 3: Enhanced function reference extraction
+ */
+function extractFunctionReference(
+  node: t.Node,
+  fileImports: string[]
+): FunctionReference {
   if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
+    const referencesUser = containsReqUser(node);
+    const callsNext = detectNextCall(node);
+    const conditionalAuth = detectConditionalAuth(node);
+    const rolesChecked = extractRoles(node);
+    const jwtInfo = detectJWTVerification(node, fileImports);
+    const errorHandling = hasErrorHandling(node);
+
     return {
       name: '<inline>',
       type: 'inline',
       isAsync: !!node.async,
-      referencesUser: containsReqUser(node),
-      callsNext: detectNextCall(node),
-      conditionalAuth: detectConditionalAuth(node),
-      rolesChecked: extractRoles(node),
+      referencesUser,
+      callsNext,
+      conditionalAuth,
+      rolesChecked,
+      hasJWTVerification: jwtInfo.hasJWT,
+      jwtVerifyMethod: jwtInfo.verifyMethod,
+      hasErrorHandling: errorHandling,
     };
   }
 
@@ -84,6 +303,9 @@ function extractFunctionReference(node: t.Node): FunctionReference {
       callsNext: false,
       conditionalAuth: false,
       rolesChecked: [],
+      hasJWTVerification: false,
+      jwtVerifyMethod: null,
+      hasErrorHandling: false,
     };
   }
 
@@ -95,62 +317,15 @@ function extractFunctionReference(node: t.Node): FunctionReference {
     callsNext: false,
     conditionalAuth: false,
     rolesChecked: [],
+    hasJWTVerification: false,
+    jwtVerifyMethod: null,
+    hasErrorHandling: false,
   };
 }
 
-function detectNextCall(fn: t.Function): boolean {
-  let found = false;
-
-  t.traverseFast(fn.body, node => {
-    if (
-      t.isCallExpression(node) &&
-      t.isIdentifier(node.callee, { name: 'next' })
-    ) {
-      found = true;
-    }
-  });
-  return found;
-}
-
-function detectConditionalAuth(fn: t.Function): boolean {
-  let found = false;
-  t.traverseFast(fn.body, node => {
-    if (t.isIfStatement(node)) {
-      const test = node.test;
-      if (
-        t.isMemberExpression(test) &&
-        t.isIdentifier(test.object, { name: 'req' }) &&
-        t.isIdentifier(test.property, { name: 'user' })
-      ) {
-        found = true;
-      }
-    }
-  });
-
-  return found;
-}
-
-function extractRoles(fn: t.Function): string[] {
-  const roles: Set<string> = new Set(); 
-
-  t.traverseFast(fn.body, node => {
-    if (
-      t.isCallExpression(node) &&
-      t.isMemberExpression (node.callee) &&
-      t.isIdentifier(node.callee.object, { name: 'req' }) &&
-      t.isIdentifier(node.callee.property, { name: 'user' }) &&
-      t.isIdentifier(node.callee.property, { name: 'role' })
-    ) {
-      roles.add('role');
-        }
-      });
-
-      return [...roles]
-
-}
-
-
-
+/**
+ * Main route extraction with Phase 3 enhancements
+ */
 export function extractExpressRoutes(
   ast: File,
   filePath: string
@@ -159,7 +334,7 @@ export function extractExpressRoutes(
   const fileImports = extractImports(ast);
 
   traverseFn(ast, {
-    CallExpression(path) {
+    CallExpression(path: any) {
       const { node } = path;
 
       if (!t.isMemberExpression(node.callee)) return;
@@ -170,27 +345,18 @@ export function extractExpressRoutes(
 
       if (!t.isIdentifier(node.callee.object)) return;
 
-      // Only string literal paths for v0
+      // Only string literal paths (no regex/params yet)
       const firstArg = node.arguments[0];
       if (!t.isStringLiteral(firstArg)) return;
 
       const handlers = node.arguments.slice(1);
       if (handlers.length === 0) return;
 
-      const globalMiddleware: FunctionReference[] = [];
-
-      if(method === 'use' && handlers.length > 0) {
-        handlers.forEach(h => {
-          const ref = extractFunctionReference(h);
-          globalMiddleware.push(ref);
-        }
-        )};
-
       const middleware: FunctionReference[] = [];
       let handler: FunctionReference | null = null;
 
-      handlers.forEach((arg, index) => {
-        const ref = extractFunctionReference(arg);
+      handlers.forEach((arg: any, index: number) => {
+        const ref = extractFunctionReference(arg, fileImports);
         if (index === handlers.length - 1) {
           handler = ref;
         } else {

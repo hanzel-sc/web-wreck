@@ -1,14 +1,19 @@
 /**
- * Analysis orchestrator
- * Coordinates all analysis passes
- * 
- * Future passes might include:
- * - SQL injection detection
- * - XSS vulnerability detection
- * - CSRF protection analysis
- * - Rate limiting detection
+ * Analysis module exports
+ * Phase 3: Auth presence analysis
+ * Phase 4: Security findings
  */
 
-import { analyzeAuthPresence } from './authPrescence.js';
+export { analyzeAuthPresence } from './authPrescence.js';
+export type { AuthAnalysis, AuthBypass } from './authPrescence.js';
 
-export { analyzeAuthPresence };
+export {
+  generateFindingReport,
+  exportFindingsMarkdown,
+} from './findings.js';
+export type {
+  FindingReport,
+  FindingSummary,
+  RouteFinding,
+  NodeFinding,
+} from './findings.js';
