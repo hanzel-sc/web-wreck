@@ -95,12 +95,12 @@ The analysis engine is framework-agnostic by design and will be extended increme
 - [x] Add legend and flow indicators
 
 ### Phase 3 — Authentication Semantics
-- [ ] Detect JWT verification usage
-- [ ] Identify missing or incorrect token validation
-- [ ] Validate middleware ordering for authentication enforcement
-- [ ] Differentiate global vs route-level authentication
-- [ ] Detect basic role-based access control patterns
-- [ ] Identify authentication bypass paths through graph traversal
+- [x] Detect JWT verification usage
+- [x] Identify missing or incorrect token validation
+- [x] Validate middleware ordering for authentication enforcement
+- [x] Differentiate global vs route-level authentication
+- [x] Detect basic role-based access control patterns
+- [x] Identify authentication bypass paths through graph traversal
 
 ### Phase 4 — Security Reporting
 - [ ] Associate security findings with graph nodes
