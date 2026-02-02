@@ -3,7 +3,7 @@
  */
 
 import type { ExecutionGraph } from '../ir/types.js';
-import type { AuthAnalysis } from '../analyze/authPrescence.js';
+import type { AuthAnalysis } from '../analyze/authPresence.js';
 
 export interface JsonOutput {
   metadata: {
@@ -11,18 +11,18 @@ export interface JsonOutput {
     timestamp: string;
     repository: string;
   };
+  executiveSummary: {
+    riskScore: number;
+    criticalIssues: number;
+    highIssues: number;
+    totalFindings: number;
+    status: string;
+  };
   summary: {
     totalRoutes: number;
     totalNodes: number;
     authNodes: number;
-    
-    // Phase 3: Enhanced metrics
     unauthenticatedRoutes: number;
-    authAfterHandler: number;
-    conditionalAuth: number;
-    missingRBAC: number;
-    missingJWTVerification: number;
-    weakJWTValidation: number;
     bypassPaths: number;
   };
   routes: Array<{
@@ -30,46 +30,21 @@ export interface JsonOutput {
     method: string;
     path: string;
     hasAuth: boolean;
-    authType?: string;
-    enforcement?: string;
-    file: string;
-    line: number;
-    
-    // Phase 4: Findings
+    riskScore: number;
     findings: Array<{
       type: string;
+      category: string;
       severity: string;
+      riskScore: number;
       message: string;
       remediation?: string;
       cwe?: string;
     }>;
   }>;
-  nodes: Array<{
-    id: string;
-    name: string;
-    type: string;
-    authType?: string;
-    enforcement?: string;
-    hasJWTVerification: boolean;
-    hasRoleValidation: boolean;
-    callsNext: boolean;
-    hasErrorHandling: boolean;
-  }>;
-  vulnerableRoutes: Array<{
-    id: string;
-    method: string;
-    path: string;
-    file: string;
-    line: number;
-    vulnerabilityType: string;
-    severity: string;
-  }>;
-  bypassPaths: Array<{
-    routeId: string;
-    method: string;
-    path: string;
-    bypassType: string;
-    description: string;
+  remediationPlan: Array<{
+    priority: string;
+    issue: string;
+    remediation: string;
   }>;
 }
 
@@ -78,115 +53,55 @@ export interface JsonOutput {
  */
 export function outputJson(
   graph: ExecutionGraph,
-  analysis: AuthAnalysis
+  analysis: AuthAnalysis,
+  report: any // SecurityReport
 ): JsonOutput {
-  const unauthSet = new Set(analysis.unauthenticated);
-
   return {
     metadata: {
-      version: '0.3.0',
+      version: '0.4.0',
       timestamp: new Date().toISOString(),
       repository: 'analyzed-repository',
+    },
+    executiveSummary: {
+      riskScore: report.summary.riskScore,
+      criticalIssues: report.summary.criticalIssues,
+      highIssues: report.summary.highIssues,
+      totalFindings: report.summary.totalFindings,
+      status: report.overallStatus,
     },
     summary: {
       totalRoutes: graph.routes.length,
       totalNodes: graph.nodes.size,
       authNodes: analysis.authNodes.length,
       unauthenticatedRoutes: analysis.unauthenticated.length,
-      authAfterHandler: analysis.authAfterHandler.length,
-      conditionalAuth: analysis.conditionalAuth.length,
-      missingRBAC: analysis.missingRBAC.length,
-      missingJWTVerification: analysis.missingJWTVerification.length,
-      weakJWTValidation: analysis.weakJWTValidation.length,
       bypassPaths: analysis.bypassPaths.length,
     },
     routes: graph.routes.map(r => {
       const findings = analysis.allFindings.get(r.id) ?? [];
-      const chain = getRouteChain(graph, r.entryNodeId);
-      const firstAuthNode = chain.find(nodeId => {
-        const node = graph.nodes.get(nodeId);
-        return node?.type === 'auth';
-      });
-      
-      const authNode = firstAuthNode ? graph.nodes.get(firstAuthNode) : null;
+      const maxRisk = findings.length > 0 ? Math.max(...findings.map(f => f.riskScore)) : 0;
 
       return {
         id: r.id,
         method: r.method,
         path: r.path,
-        hasAuth: !unauthSet.has(r.id),
-        authType: authNode?.metadata.authType,
-        enforcement: authNode?.metadata.enforcement,
-        file: r.sourceLocation.filePath,
-        line: r.sourceLocation.line,
+        hasAuth: !analysis.unauthenticated.includes(r.id),
+        riskScore: maxRisk,
         findings: findings.map(f => ({
           type: f.type,
+          category: f.category,
           severity: f.severity,
+          riskScore: f.riskScore,
           message: f.message,
           remediation: f.remediation,
           cwe: f.cwe,
         })),
       };
     }),
-    nodes: Array.from(graph.nodes.values()).map(n => ({
-      id: n.id,
-      name: n.name,
-      type: n.type,
-      authType: n.metadata.authType,
-      enforcement: n.metadata.enforcement,
-      hasJWTVerification: n.metadata.hasJWTVerification,
-      hasRoleValidation: n.metadata.hasRoleValidation,
-      callsNext: n.metadata.callsNext,
-      hasErrorHandling: n.metadata.hasErrorHandling,
+    remediationPlan: report.remediationPlan.map((rp: any) => ({
+      priority: rp.priority,
+      issue: rp.issue,
+      remediation: rp.remediation,
     })),
-    vulnerableRoutes: [
-      ...analysis.unauthenticated.map(id => {
-        const route = graph.routes.find(r => r.id === id);
-        return route ? {
-          id,
-          method: route.method,
-          path: route.path,
-          file: route.sourceLocation.filePath,
-          line: route.sourceLocation.line,
-          vulnerabilityType: 'missing-authentication',
-          severity: 'critical',
-        } : null;
-      }),
-      ...analysis.authAfterHandler.map(id => {
-        const route = graph.routes.find(r => r.id === id);
-        return route ? {
-          id,
-          method: route.method,
-          path: route.path,
-          file: route.sourceLocation.filePath,
-          line: route.sourceLocation.line,
-          vulnerabilityType: 'auth-after-handler',
-          severity: 'critical',
-        } : null;
-      }),
-      ...analysis.missingRBAC.map(id => {
-        const route = graph.routes.find(r => r.id === id);
-        return route ? {
-          id,
-          method: route.method,
-          path: route.path,
-          file: route.sourceLocation.filePath,
-          line: route.sourceLocation.line,
-          vulnerabilityType: 'missing-rbac',
-          severity: 'critical',
-        } : null;
-      }),
-    ].filter(Boolean) as any,
-    bypassPaths: analysis.bypassPaths.map(bp => {
-      const route = graph.routes.find(r => r.id === bp.routeId);
-      return {
-        routeId: bp.routeId,
-        method: route?.method ?? 'UNKNOWN',
-        path: route?.path ?? 'unknown',
-        bypassType: bp.bypassType,
-        description: bp.description,
-      };
-    }),
   };
 }
 

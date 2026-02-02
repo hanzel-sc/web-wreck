@@ -4,8 +4,8 @@
  * Phase 4: Security findings
  */
 
-export { analyzeAuthPresence } from './authPrescence.js';
-export type { AuthAnalysis, AuthBypass } from './authPrescence.js';
+export { analyzeAuthPresence } from './authPresence.js';
+export type { AuthAnalysis, AuthBypass } from './authPresence.js';
 
 export {
   generateFindingReport,
@@ -17,3 +17,6 @@ export type {
   RouteFinding,
   NodeFinding,
 } from './findings.js';
+
+export { generateSecurityReport } from './report.js';
+export type { SecurityReport, RemediationItem } from './report.js';

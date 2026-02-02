@@ -32,10 +32,24 @@ function classifyNode(
 
   // Phase 3: JWT verification detection
   if (ref.hasJWTVerification) {
+    let authType: AuthType = 'jwt-verification';
+    if (ref.jwtVerifyMethod === 'passport') {
+      authType = 'custom'; // passport handles details
+    }
+
     return {
       kind: 'auth',
-      authType: 'jwt-verification',
+      authType: authType,
       enforcement: ref.hasErrorHandling ? 'hard' : 'soft',
+    };
+  }
+
+  // Phase 3: Session detection
+  if (name.includes('session') || fileImports.some(imp => imp.includes('session'))) {
+    return {
+      kind: 'auth',
+      authType: 'session-check',
+      enforcement: 'soft', // session checks are usually soft unless followed by redirect
     };
   }
 
@@ -54,7 +68,7 @@ function classifyNode(
   if (authPatterns.some(pattern => name.includes(pattern))) {
     // Determine auth type from name and imports
     let authType: AuthType = 'custom';
-    
+
     if (name.includes('jwt') || fileImports.some(imp => imp.includes('jwt'))) {
       authType = 'jwt-verification';
     } else if (name.includes('session')) {
@@ -69,7 +83,7 @@ function classifyNode(
 
     // Determine enforcement level
     let enforcement: AuthEnforcement = 'hard';
-    
+
     if (ref.conditionalAuth) {
       enforcement = 'conditional';
     } else if (!ref.callsNext && !isHandler) {
@@ -88,7 +102,8 @@ function classifyNode(
     ref.rolesChecked.length > 0 ||
     name.includes('role') ||
     name.includes('permission') ||
-    name.includes('authorize')
+    name.includes('authorize') ||
+    name.includes('admin')
   ) {
     return {
       kind: 'auth',
@@ -114,6 +129,7 @@ export function buildExecutionGraph(
   const edges: Edge[] = [];
 
   nodeCounter = 0;
+  const sessionMiddleware: string[] = [];
 
   for (const file of parsedFiles) {
     for (const routeDef of file.routes) {
@@ -122,6 +138,10 @@ export function buildExecutionGraph(
       // Process middleware chain
       for (const mw of routeDef.middleware) {
         const classification = classifyNode(mw, routeDef.fileImports, false);
+
+        if (classification.authType === 'session-check') {
+          sessionMiddleware.push(mw.name);
+        }
 
         const nodeId = createNode(nodes, classification.kind, mw.name, {
           isAsync: mw.isAsync,
@@ -183,10 +203,10 @@ export function buildExecutionGraph(
       // Build execution edges with conditions
       for (let i = 0; i < nodeIds.length - 1; i++) {
         const fromNode = nodes.get(nodeIds[i]);
-        
+
         // Determine edge condition based on middleware behavior
         let condition: Edge['condition'] = 'always';
-        
+
         if (fromNode && fromNode.type === 'auth') {
           if (fromNode.metadata.hasErrorHandling) {
             condition = 'on-success';
@@ -217,7 +237,12 @@ export function buildExecutionGraph(
     }
   }
 
-  return { routes, nodes, edges };
+  return {
+    routes,
+    nodes,
+    edges,
+    sessionMiddleware: Array.from(new Set(sessionMiddleware))
+  };
 }
 
 /**

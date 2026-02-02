@@ -9,7 +9,7 @@ import type {
   Severity,
   FindingType,
 } from '../ir/types.js';
-import type { AuthAnalysis } from './authPrescence.js';
+import type { AuthAnalysis } from './authPresence.js';
 
 export interface FindingReport {
   summary: FindingSummary;
@@ -26,6 +26,7 @@ export interface FindingSummary {
   medium: number;
   low: number;
   info: number;
+  avgRiskScore: number;
   affectedRoutes: number;
   affectedNodes: number;
 }
@@ -36,6 +37,7 @@ export interface RouteFinding {
   path: string;
   findings: SecurityFinding[];
   maxSeverity: Severity;
+  maxRiskScore: number;
   file: string;
   line: number;
 }
@@ -71,9 +73,11 @@ export function generateFindingReport(
     const route = graph.routes.find(r => r.id === routeId);
     if (!route) continue;
 
-    // Determine max severity
+    // Determine max severity and risk score
     const severities: Severity[] = ['info', 'low', 'medium', 'high', 'critical'];
+    let maxRiskScore = 0;
     const maxSeverity = findings.reduce((max, f) => {
+      if (f.riskScore > maxRiskScore) maxRiskScore = f.riskScore;
       return severities.indexOf(f.severity) > severities.indexOf(max)
         ? f.severity
         : max;
@@ -85,6 +89,7 @@ export function generateFindingReport(
       path: route.path,
       findings,
       maxSeverity,
+      maxRiskScore,
       file: route.sourceLocation.filePath,
       line: route.sourceLocation.line,
     });
@@ -106,19 +111,16 @@ export function generateFindingReport(
     const routeFindings = byRoute.get(route.id);
     if (!routeFindings) continue;
 
-    const chain = getRouteChain(graph, route.entryNodeId);
-    for (const nodeId of chain) {
-      const node = graph.nodes.get(nodeId);
-      if (!node) continue;
-
+    const chain = getOrderedExecutionChain(graph, route.entryNodeId);
+    for (const node of chain) {
       // Add relevant findings to this node
       const nodeFindings = routeFindings.findings.filter(f =>
         isRelevantToNode(f, node.type, node.name)
       );
 
       if (nodeFindings.length > 0) {
-        const existing = byNode.get(nodeId) ?? {
-          nodeId,
+        const existing = byNode.get(node.id) ?? {
+          nodeId: node.id,
           nodeName: node.name,
           nodeType: node.type,
           findings: [],
@@ -127,7 +129,7 @@ export function generateFindingReport(
         };
 
         existing.findings.push(...nodeFindings);
-        byNode.set(nodeId, existing);
+        byNode.set(node.id, existing);
       }
     }
   }
@@ -152,39 +154,42 @@ function generateSummary(
   byRoute: Map<string, RouteFinding>,
   byNode: Map<string, NodeFinding>
 ): FindingSummary {
+  const allFindings: SecurityFinding[] = [];
+  bySeverity.forEach(bucket => allFindings.push(...bucket));
+
+  const avgRisk = allFindings.length > 0
+    ? allFindings.reduce((a, b) => a + b.riskScore, 0) / allFindings.length
+    : 0;
+
   return {
-    totalFindings:
-      (bySeverity.get('critical')?.length ?? 0) +
-      (bySeverity.get('high')?.length ?? 0) +
-      (bySeverity.get('medium')?.length ?? 0) +
-      (bySeverity.get('low')?.length ?? 0) +
-      (bySeverity.get('info')?.length ?? 0),
+    totalFindings: allFindings.length,
     critical: bySeverity.get('critical')?.length ?? 0,
     high: bySeverity.get('high')?.length ?? 0,
     medium: bySeverity.get('medium')?.length ?? 0,
     low: bySeverity.get('low')?.length ?? 0,
     info: bySeverity.get('info')?.length ?? 0,
+    avgRiskScore: Math.round(avgRisk),
     affectedRoutes: byRoute.size,
     affectedNodes: byNode.size,
   };
 }
 
 /**
- * Get execution chain for a route
+ * Get ordered execution chain via traversal
  */
-function getRouteChain(graph: ExecutionGraph, startNodeId: string): string[] {
+function getOrderedExecutionChain(graph: ExecutionGraph, startNodeId: string): any[] {
   const visited = new Set<string>();
-  const result: string[] = [];
+  const result: any[] = [];
 
   function dfs(nodeId: string) {
     if (visited.has(nodeId)) return;
     visited.add(nodeId);
-    result.push(nodeId);
+    const node = graph.nodes.get(nodeId);
+    if (node) result.push(node);
 
+    // Simplistic DFS for now as build.ts produces linear chains mostly
     const outgoing = graph.edges.filter(e => e.from === nodeId);
-    for (const edge of outgoing) {
-      dfs(edge.to);
-    }
+    for (const edge of outgoing) dfs(edge.to);
   }
 
   dfs(startNodeId);

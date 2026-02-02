@@ -10,6 +10,8 @@ export interface ExecutionGraph {
   routes: Route[];
   nodes: Map<string, ExecutionNode>;
   edges: Edge[];
+  executiveSummary?: ExecutiveSummary;
+  sessionMiddleware?: string[];
 }
 
 /**
@@ -36,7 +38,7 @@ export type AuthEnforcement = 'hard' | 'soft' | 'conditional' | 'none';
 /**
  * Phase 3: Auth middleware classification
  */
-export type AuthType = 
+export type AuthType =
   | 'jwt-verification'    // Validates JWT tokens
   | 'session-check'       // Checks session existence
   | 'api-key'            // Validates API keys
@@ -54,24 +56,24 @@ export interface NodeMetadata {
   referencesUser: boolean;
   fileImports: string[];
   sourceLocation: SourceLocation;
-  
+
   // Phase 3: Auth classification
   authType?: AuthType;
   enforcement?: AuthEnforcement;
-  
+
   // Phase 3: RBAC
   rolesChecked?: string[];
   hasRoleValidation: boolean;
-  
+
   // Phase 3: JWT specifics
   hasJWTVerification: boolean;
   jwtVerifyMethod?: string | null;
-  
+
   // Phase 3: Middleware behavior
   callsNext: boolean;
   hasErrorHandling: boolean;
   conditionalAuth: boolean;
-  
+
   // Phase 4: Security findings
   findings: SecurityFinding[];
 }
@@ -104,15 +106,52 @@ export interface SourceLocation {
 }
 
 /**
+ * Phase 4: Risk scoring and categories
+ */
+export type RiskScore = number; // 0-100 score
+
+export type FindingCategory =
+  | 'authentication'
+  | 'authorization'
+  | 'cryptography'
+  | 'data-protection'
+  | 'configuration'
+  | 'other';
+
+/**
+ * Phase 4: Code context for findings
+ */
+export interface CodeContext {
+  snippet: string;
+  startLine: number;
+  endLine: number;
+}
+
+/**
  * Phase 4: Security finding attached to nodes
  */
 export interface SecurityFinding {
   id: string;
   type: FindingType;
+  category: FindingCategory;
   severity: Severity;
   message: string;
   remediation?: string;
   cwe?: string;
+  riskScore: RiskScore;
+  codeContext?: CodeContext;
+  affectedNodeIds?: string[];
+}
+
+/**
+ * Phase 4: Executive summary metrics
+ */
+export interface ExecutiveSummary {
+  riskScore: number;
+  criticalIssues: number;
+  highIssues: number;
+  totalFindings: number;
+  remediationComplexity: 'low' | 'medium' | 'high';
 }
 
 /**
@@ -128,7 +167,10 @@ export type FindingType =
   | 'missing-error-handling'
   | 'missing-next-call'
   | 'missing-rbac'
-  | 'privilege-escalation-risk';
+  | 'session-fixation-risk'
+  | 'broken-access-control'
+  | 'privilege-escalation-risk'
+  | 'public-endpoint';
 
 /**
  * Phase 4: Severity levels
