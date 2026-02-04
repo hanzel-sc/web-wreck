@@ -192,12 +192,33 @@ export function outputHtml(graph: ExecutionGraph, analysis: AuthAnalysis, report
     .node text { font-size: 10px; font-weight: 600; pointer-events: none; }
 
     .link { fill: none; stroke: #ccd0d5; stroke-width: 1.5px; stroke-opacity: 0.4; }
+    .link.secure { stroke: #34c759; stroke-opacity: 0.6; }
+    .link.insecure { stroke: #ff3b30; stroke-opacity: 0.6; }
 
-    .node.route circle { r: 14; }
+    /* Root node */
+    .node.root circle { r: 18; fill: #1a2a6c; stroke: #0d1536; }
+    .node.root text { fill: white; font-weight: 700; }
+    
+    /* Route nodes */
+    .node.route circle { r: 14; fill: #74c0fc; stroke: #1864ab; }
+    
+    /* Auth middleware */
     .node.auth circle { r: 12; fill: #ffd43b; stroke: #fab005; }
+    
+    /* Handler nodes */
     .node.handler circle { r: 12; fill: #ccd0d5; stroke: #8d949e; }
+    
+    /* Vulnerable routes - RED */
     .node.vulnerable circle { fill: #ff3b30; stroke: #c62828; }
+    .node.vulnerable text { fill: #c62828; font-weight: 700; }
+    
+    /* Safe/Protected routes - GREEN */
     .node.safe circle { fill: #34c759; stroke: #2e7d32; }
+    .node.safe text { fill: #2e7d32; }
+    
+    /* Public routes (intentionally no auth) - BLUE */
+    .node.public circle { fill: #74c0fc; stroke: #1864ab; }
+    .node.public text { fill: #1864ab; }
 
     .tooltip {
       position: absolute;
@@ -308,8 +329,10 @@ export function outputHtml(graph: ExecutionGraph, analysis: AuthAnalysis, report
       <div class="legend">
         <div class="legend-item"><div class="legend-dot" style="background: #ff3b30"></div> Vulnerable Route</div>
         <div class="legend-item"><div class="legend-dot" style="background: #34c759"></div> Protected Route</div>
+        <div class="legend-item"><div class="legend-dot" style="background: #74c0fc"></div> Public Route</div>
         <div class="legend-item"><div class="legend-dot" style="background: #ffd43b"></div> Auth Middleware</div>
-        <div class="legend-item"><div class="legend-dot" style="background: #ccd0d5"></div> Custom Handler</div>
+        <div class="legend-item"><div class="legend-dot" style="background: #ccd0d5"></div> Handler</div>
+        <div class="legend-item"><div class="legend-dot" style="background: #1a2a6c"></div> App Entry</div>
       </div>
     </div>
 
@@ -388,7 +411,13 @@ export function outputHtml(graph: ExecutionGraph, analysis: AuthAnalysis, report
       const node = g.selectAll('.node')
         .data(root.descendants())
         .join('g')
-        .attr('class', d => 'node ' + d.data.type + ' ' + (d.data.vulnerable ? 'vulnerable' : (d.data.safe ? 'safe' : '')))
+        .attr('class', d => {
+          let classes = 'node ' + d.data.type;
+          if (d.data.vulnerable) classes += ' vulnerable';
+          else if (d.data.isPublic) classes += ' public';
+          else if (d.data.safe) classes += ' safe';
+          return classes;
+        })
         .attr('transform', d => 'translate(' + (d.y + 100) + ',' + (d.x + 50) + ')')
         .on('mouseover', showTooltip)
         .on('mouseout', hideTooltip);
@@ -433,7 +462,13 @@ export function outputHtml(graph: ExecutionGraph, analysis: AuthAnalysis, report
       const node = g.selectAll('.node')
         .data(nodes)
         .join('g')
-        .attr('class', d => 'node ' + d.type + ' ' + (d.vulnerable ? 'vulnerable' : (d.safe ? 'safe' : '')))
+        .attr('class', d => {
+          let classes = 'node ' + d.type;
+          if (d.vulnerable) classes += ' vulnerable';
+          else if (d.isPublic) classes += ' public';
+          else if (d.safe) classes += ' safe';
+          return classes;
+        })
         .call(d3.drag()
           .on('start', dragstarted)
           .on('drag', dragged)
@@ -532,8 +567,29 @@ function generateTreeData(graph: ExecutionGraph, analysis: AuthAnalysis): any {
   const adjacency = buildAdjacency(graph);
 
   graph.routes.forEach(route => {
-    const isVulnerable = analysis.unauthenticated.includes(route.id);
-    const isProtected = !isVulnerable && analysis.authNodes.length > 0;
+    // Check if this specific route is in the unauthenticated list
+    const isInUnauthList = analysis.unauthenticated.includes(route.id);
+
+    // Check the findings for this route to determine if it's truly vulnerable or just public
+    const routeFindings = analysis.allFindings.get(route.id) ?? [];
+    const hasSecurityIssue = routeFindings.some(f =>
+      f.severity === 'critical' || f.severity === 'high' || f.severity === 'medium'
+    );
+    const isPublicEndpoint = routeFindings.some(f =>
+      f.type === 'public-endpoint' && f.severity === 'info'
+    );
+
+    // Get the execution chain for this route and check for auth nodes
+    const chain = getOrderedExecutionChain(graph, adjacency, route.entryNodeId);
+    const routeHasAuthNode = chain.some((node: any) => node.type === 'auth');
+
+    // Determine route status:
+    // - isVulnerable: in unauthenticated list AND has actual security issues (not just public endpoints)
+    // - isPublic: intentionally public endpoint (auth routes, health checks, etc.)
+    // - isProtected: has auth middleware in its chain
+    const isVulnerable = isInUnauthList && hasSecurityIssue;
+    const isPublic = isPublicEndpoint && !hasSecurityIssue;
+    const isProtected = routeHasAuthNode && !isVulnerable;
 
     const routeNode = {
       id: route.id,
@@ -541,13 +597,12 @@ function generateTreeData(graph: ExecutionGraph, analysis: AuthAnalysis): any {
       type: 'route',
       vulnerable: isVulnerable,
       safe: isProtected,
+      isPublic: isPublic,
       file: route.sourceLocation.filePath,
       children: [] as any[]
     };
 
     // Build chain for this route
-    const chain = getOrderedExecutionChain(graph, adjacency, route.entryNodeId);
-
     let currentLevel = routeNode.children;
     chain.forEach((node: any) => {
       const leaf = {

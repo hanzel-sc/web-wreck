@@ -90,6 +90,39 @@ function analyzeRouteChain(
     // Finding 1: No authentication at all
     if (authNodes.length === 0) {
         const isPublic = isPublicRoute(route);
+        const isAuthFlow = isAuthenticationRoute(route);
+        const isRouterMount = isRouterMountRoute(route);
+
+        // Auth flow routes (login/register/logout) don't need prior authentication
+        if (isAuthFlow) {
+            addFinding(findings, routeId, {
+                id: `${routeId}-auth-flow`,
+                type: 'public-endpoint',
+                category: 'authentication',
+                severity: 'info',
+                riskScore: 0,
+                message: `Route ${route.method} ${route.path} is an authentication flow endpoint`,
+                remediation: 'No action needed - authentication endpoints should be publicly accessible.',
+                affectedNodeIds: [chain[0]?.id],
+            });
+            return;
+        }
+
+        // Router mount routes (USE /api/auth) are mounting routers, not endpoints
+        if (isRouterMount) {
+            addFinding(findings, routeId, {
+                id: `${routeId}-router-mount`,
+                type: 'public-endpoint',
+                category: 'authentication',
+                severity: 'info',
+                riskScore: 0,
+                message: `Route ${route.method} ${route.path} is a router mount point`,
+                remediation: 'Router mounts delegate auth to sub-routes. Review the mounted router separately.',
+                affectedNodeIds: [chain[0]?.id],
+            });
+            return;
+        }
+
         if (isPublic) {
             // Log as informational if it's a known public route
             addFinding(findings, routeId, {
@@ -221,35 +254,130 @@ function analyzeRouteChain(
 
 /**
  * Identify public routes (whitelist)
+ * These are routes that are intentionally publicly accessible
  */
 function isPublicRoute(route: Route): boolean {
     const path = route.path.toLowerCase();
+    const method = route.method.toUpperCase();
 
+    // Expanded whitelist of public paths
     const publicPaths = [
-        'login', 'register', 'signup', 'public', 'static', 'assets',
-        'favicon', 'health', 'status', 'ping', 'docs', 'swagger'
+        // Auth flow endpoints (these need to be accessible without auth)
+        'login', 'register', 'signup', 'logout', 'signout',
+        'forgot', 'reset', 'verify', 'confirm', 'activate',
+        'oauth', 'callback', 'token', 'refresh',
+        // Public content
+        'public', 'static', 'assets', 'uploads',
+        'favicon', 'robots', 'sitemap', 'manifest',
+        // Health/status endpoints
+        'health', 'status', 'ping', 'ready', 'live', 'version',
+        // Documentation
+        'docs', 'swagger', 'api-docs', 'openapi', 'graphql',
+        // Static resources
+        '.css', '.js', '.png', '.jpg', '.svg', '.ico', '.woff'
     ];
 
-    return publicPaths.some(p => path.includes(p));
+    // Check if path contains any public pattern
+    if (publicPaths.some(p => path.includes(p))) return true;
+
+    // Root path GET is typically public (home page)
+    if (path === '/' && method === 'GET') return true;
+
+    return false;
 }
 
 /**
- * Identify privileged routes
+ * Identify authentication flow routes
+ * These routes ARE the authentication mechanism and shouldn't require prior auth
+ */
+function isAuthenticationRoute(route: Route): boolean {
+    const path = route.path.toLowerCase();
+    const method = route.method.toUpperCase();
+    const filePath = route.sourceLocation.filePath.toLowerCase();
+
+    // Routes in auth-related files are typically auth flow routes
+    const authFilePatterns = ['auth.js', 'auth.ts', 'authentication', 'login', 'session'];
+    const isAuthFile = authFilePatterns.some(p => filePath.includes(p));
+
+    // Common auth endpoint patterns
+    const authEndpoints = [
+        { method: 'POST', patterns: ['login', 'signin', 'register', 'signup', 'logout', 'signout', 'token', 'refresh'] },
+        { method: 'GET', patterns: ['logout', 'signout', 'oauth', 'callback', 'verify', 'confirm'] },
+    ];
+
+    for (const endpoint of authEndpoints) {
+        if (method === endpoint.method || endpoint.method === 'ANY') {
+            if (endpoint.patterns.some(p => path.includes(p))) {
+                return true;
+            }
+        }
+    }
+
+    // If file is auth-related and endpoint looks like auth, it's an auth route
+    if (isAuthFile && ['POST', 'GET'].includes(method)) {
+        const authPatterns = ['login', 'register', 'logout', 'signup', 'token', 'session', 'password'];
+        if (authPatterns.some(p => path.includes(p))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Identify router mount routes (USE with router)
+ * These mount sub-routers and shouldn't be analyzed as individual endpoints
+ */
+function isRouterMountRoute(route: Route): boolean {
+    const method = route.method.toUpperCase();
+    const path = route.path.toLowerCase();
+
+    // USE routes that mount other routers
+    if (method === 'USE') {
+        // Common patterns for router mounts
+        const routerMountPatterns = [
+            '/api/', '/v1/', '/v2/', '/auth', '/users', '/admin',
+            '/company', '/student', '/faculty', '/jobs', '/applications'
+        ];
+        return routerMountPatterns.some(p => path.includes(p)) || path.startsWith('/api');
+    }
+
+    return false;
+}
+
+/**
+ * Identify privileged routes that require elevated permissions
  */
 function isPrivilegedRoute(route: Route): boolean {
     const path = route.path.toLowerCase();
     const method = route.method.toUpperCase();
+    const filePath = route.sourceLocation.filePath.toLowerCase();
 
-    // Whitelist public routes first
+    // Never flag public or auth routes as privileged
     if (isPublicRoute(route)) return false;
+    if (isAuthenticationRoute(route)) return false;
+    if (isRouterMountRoute(route)) return false;
 
+    // Routes in auth files are auth mechanisms, not privileged resources
+    const authFilePatterns = ['auth.js', 'auth.ts', 'authentication', 'login', 'session'];
+    if (authFilePatterns.some(p => filePath.includes(p))) return false;
+
+    // Explicit admin/management paths
     const privilegedPaths = [
-        'admin', 'internal', 'manage', 'delete', 'remove', 'update',
-        'create', 'modify', 'settings', 'config', 'user/pw', 'profile/edit'
+        'admin', 'internal', 'manage', 'superuser', 'sudo',
+        'settings', 'config', 'system', 'audit'
     ];
 
     if (privilegedPaths.some(p => path.includes(p))) return true;
-    if (['DELETE', 'PUT', 'PATCH'].includes(method)) return true;
+
+    // Destructive operations on resources (but not all PUT/DELETE)
+    // Only flag if path suggests resource modification
+    if (method === 'DELETE') {
+        // DELETE on specific resources with ID patterns
+        if (path.includes(':id') || path.match(/\/[a-z]+\/\d+/)) {
+            return true;
+        }
+    }
 
     return false;
 }
