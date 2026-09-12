@@ -1,90 +1,70 @@
 /**
- * Express route extraction - Enhanced for Phase 3
- * Compiler-style frontend for Express routing with deep semantic analysis
+ * Express route extraction — Enhanced
+ * Compiler-style frontend for Express routing with deep semantic analysis.
+ * 
+ * Features:
+ * - Route definition extraction (app.get, router.post, etc.)
+ * - Router mount point detection (app.use('/api', router))
+ * - Global middleware detection (app.use(fn) without path)
+ * - Cross-file function resolution for identifier references
+ * - JWT/Passport/Session auth pattern detection
+ * - RBAC and conditional auth analysis
  */
 
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
 import type { File } from '@babel/types';
 import type { RouteDefinition, FunctionReference } from './index.js';
+import type { FunctionResolver } from './resolve.js';
 
-const traverseFn =
-  typeof traverse === 'function'
-    ? traverse
-    : (traverse as any).default;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const traverseFn: (ast: File, visitors: Record<string, (path: any) => void>) => void =
+  typeof (traverse as any).default === 'function'
+    ? (traverse as any).default
+    : traverse as any;
 
 const HTTP_METHODS = new Set([
-  'get',
-  'post',
-  'put',
-  'delete',
-  'patch',
-  'use',
-  'all',
+  'get', 'post', 'put', 'delete', 'patch', 'use', 'all',
 ]);
 
-// Phase 3: JWT library detection patterns
+// JWT library detection patterns
 const JWT_LIBRARIES = new Set([
-  'jsonwebtoken',
-  'express-jwt',
-  'jwt-simple',
-  '@auth0/express-jwt',
-  'passport-jwt',
+  'jsonwebtoken', 'express-jwt', 'jwt-simple',
+  '@auth0/express-jwt', 'passport-jwt',
 ]);
 
 const PASSPORT_LIBRARIES = new Set([
-  'passport',
-  'passport-local',
-  'passport-http',
-  'passport-strategy',
+  'passport', 'passport-local', 'passport-http', 'passport-strategy',
 ]);
 
 const SESSION_LIBRARIES = new Set([
-  'express-session',
-  'cookie-session',
-  'connect-mongodb-session',
+  'express-session', 'cookie-session', 'connect-mongodb-session',
 ]);
 
-// Phase 3: Common JWT validation patterns
+// Common JWT validation patterns
 const JWT_VERIFY_PATTERNS = [
-  'verify',
-  'decode',
-  'validateToken',
-  'verifyToken',
-  'checkToken',
+  'verify', 'decode', 'validateToken', 'verifyToken', 'checkToken',
 ];
 
-/**
- * Extract all imports and requires from a file
- */
-function extractImports(ast: File): string[] {
-  const imports: string[] = [];
-
-  traverseFn(ast, {
-    ImportDeclaration(path: any) {
-      imports.push(path.node.source.value);
-    },
-    CallExpression(path: any) {
-      const { node } = path;
-      if (
-        t.isIdentifier(node.callee, { name: 'require' }) &&
-        node.arguments.length === 1 &&
-        t.isStringLiteral(node.arguments[0])
-      ) {
-        imports.push(node.arguments[0].value);
-      }
-    },
-  });
-
-  return imports;
+/** Mount point: app.use('/prefix', routerVar) */
+export interface MountPoint {
+  path: string;
+  routerName: string;
+  filePath: string;
+  line: number;
 }
 
-/**
- * Phase 3: Detect if function references req.user
- */
+/** Global middleware: app.use(fn) without a path */
+export interface GlobalMiddlewareDefinition {
+  ref: FunctionReference;
+  filePath: string;
+  line: number;
+}
+
+// ─── Auth pattern detection helpers ────────────────────────────────
+
 function containsReqUser(fn: t.Function): boolean {
   let found = false;
-
   t.traverseFast(fn.body, node => {
     if (
       t.isMemberExpression(node) &&
@@ -94,16 +74,11 @@ function containsReqUser(fn: t.Function): boolean {
       found = true;
     }
   });
-
   return found;
 }
 
-/**
- * Phase 3: Detect next() calls - critical for middleware ordering
- */
 function detectNextCall(fn: t.Function): boolean {
   let hasNext = false;
-
   t.traverseFast(fn.body, node => {
     if (
       t.isCallExpression(node) &&
@@ -112,21 +87,14 @@ function detectNextCall(fn: t.Function): boolean {
       hasNext = true;
     }
   });
-
   return hasNext;
 }
 
-/**
- * Phase 3: Detect conditional authentication (if (req.user) pattern)
- */
 function detectConditionalAuth(fn: t.Function): boolean {
   let found = false;
-
   t.traverseFast(fn.body, node => {
     if (t.isIfStatement(node)) {
       const test = node.test;
-
-      // Pattern: if (req.user)
       if (
         t.isMemberExpression(test) &&
         t.isIdentifier(test.object, { name: 'req' }) &&
@@ -134,8 +102,6 @@ function detectConditionalAuth(fn: t.Function): boolean {
       ) {
         found = true;
       }
-
-      // Pattern: if (!req.user)
       if (
         t.isUnaryExpression(test, { operator: '!' }) &&
         t.isMemberExpression(test.argument) &&
@@ -146,22 +112,12 @@ function detectConditionalAuth(fn: t.Function): boolean {
       }
     }
   });
-
   return found;
 }
 
-/**
- * Phase 3: Extract role checks from middleware
- * Detects patterns like:
- * - req.user.role
- * - req.user.roles.includes()
- * - Array.from(req.user.permissions)
- */
 function extractRoles(fn: t.Function): string[] {
   const roles: Set<string> = new Set();
-
   t.traverseFast(fn.body, node => {
-    // Pattern: req.user.role === 'admin'
     if (
       t.isMemberExpression(node) &&
       t.isMemberExpression(node.object) &&
@@ -170,17 +126,10 @@ function extractRoles(fn: t.Function): string[] {
       t.isIdentifier(node.property)
     ) {
       const roleProp = node.property.name;
-      if (
-        roleProp === 'role' ||
-        roleProp === 'roles' ||
-        roleProp === 'permissions' ||
-        roleProp === 'authorities'
-      ) {
+      if (['role', 'roles', 'permissions', 'authorities'].includes(roleProp)) {
         roles.add(roleProp);
       }
     }
-
-    // Pattern: roles.includes('admin')
     if (
       t.isCallExpression(node) &&
       t.isMemberExpression(node.callee) &&
@@ -191,25 +140,18 @@ function extractRoles(fn: t.Function): string[] {
       roles.add(node.arguments[0].value);
     }
   });
-
   return Array.from(roles);
 }
 
-/**
- * Phase 3: Detect Passport.js authentication
- */
 function detectPassportAuth(fn: t.Function, fileImports: string[]): boolean {
   let hasPassport = false;
-
-  const hasPassportImport = fileImports.some(imp =>
-    PASSPORT_LIBRARIES.has(imp) || imp.includes('passport')
+  const hasPassportImport = fileImports.some(
+    imp => PASSPORT_LIBRARIES.has(imp) || imp.includes('passport')
   );
-
   if (!hasPassportImport) return false;
 
   t.traverseFast(fn.body, node => {
     if (t.isCallExpression(node)) {
-      // Pattern: passport.authenticate('local')
       if (
         t.isMemberExpression(node.callee) &&
         t.isIdentifier(node.callee.object, { name: 'passport' }) &&
@@ -217,8 +159,6 @@ function detectPassportAuth(fn: t.Function, fileImports: string[]): boolean {
       ) {
         hasPassport = true;
       }
-
-      // Pattern: req.isAuthenticated()
       if (
         t.isMemberExpression(node.callee) &&
         t.isIdentifier(node.callee.object, { name: 'req' }) &&
@@ -228,20 +168,14 @@ function detectPassportAuth(fn: t.Function, fileImports: string[]): boolean {
       }
     }
   });
-
   return hasPassport;
 }
 
-/**
- * Phase 3: Detect session usage
- */
 function detectSessionUsage(fn: t.Function, fileImports: string[]): boolean {
   let hasSession = false;
-
-  const hasSessionImport = fileImports.some(imp =>
-    SESSION_LIBRARIES.has(imp) || imp.includes('session')
+  const hasSessionImport = fileImports.some(
+    imp => SESSION_LIBRARIES.has(imp) || imp.includes('session')
   );
-
   t.traverseFast(fn.body, node => {
     if (
       t.isMemberExpression(node) &&
@@ -251,33 +185,23 @@ function detectSessionUsage(fn: t.Function, fileImports: string[]): boolean {
       hasSession = true;
     }
   });
-
   return hasSession || hasSessionImport;
 }
 
-/**
- * Phase 3: Detect JWT verification in middleware (existing function, kept for context)
- */
-function detectJWTVerification(fn: t.Function, fileImports: string[]): {
-  hasJWT: boolean;
-  verifyMethod: string | null;
-} {
+function detectJWTVerification(
+  fn: t.Function,
+  fileImports: string[]
+): { hasJWT: boolean; verifyMethod: string | null } {
   let hasJWT = false;
   let verifyMethod: string | null = null;
 
-  // Check if file imports JWT library
-  const hasJWTImport = fileImports.some(imp =>
-    JWT_LIBRARIES.has(imp) || imp.includes('jwt')
+  const hasJWTImport = fileImports.some(
+    imp => JWT_LIBRARIES.has(imp) || imp.includes('jwt')
   );
+  if (!hasJWTImport) return { hasJWT: false, verifyMethod: null };
 
-  if (!hasJWTImport) {
-    return { hasJWT: false, verifyMethod: null };
-  }
-
-  // Look for JWT verification calls
   t.traverseFast(fn.body, node => {
     if (t.isCallExpression(node)) {
-      // Pattern: jwt.verify()
       if (
         t.isMemberExpression(node.callee) &&
         t.isIdentifier(node.callee.object, { name: 'jwt' }) &&
@@ -289,8 +213,6 @@ function detectJWTVerification(fn: t.Function, fileImports: string[]): {
           verifyMethod = method;
         }
       }
-
-      // Pattern: verify() direct call
       if (t.isIdentifier(node.callee)) {
         const method = node.callee.name;
         if (JWT_VERIFY_PATTERNS.includes(method)) {
@@ -300,23 +222,15 @@ function detectJWTVerification(fn: t.Function, fileImports: string[]): {
       }
     }
   });
-
   return { hasJWT, verifyMethod };
 }
 
-/**
- * Phase 3: Detect error handling in auth middleware
- */
 function hasErrorHandling(fn: t.Function): boolean {
   let hasHandler = false;
-
   t.traverseFast(fn.body, node => {
-    // Try-catch blocks
     if (t.isTryStatement(node)) {
       hasHandler = true;
     }
-
-    // Error responses (res.status(401/403))
     if (
       t.isCallExpression(node) &&
       t.isMemberExpression(node.callee) &&
@@ -334,42 +248,72 @@ function hasErrorHandling(fn: t.Function): boolean {
       }
     }
   });
-
   return hasHandler;
 }
 
+// ─── Function analysis ─────────────────────────────────────────────
+
 /**
- * Phase 3: Enhanced function reference extraction
+ * Analyze a function node for auth patterns and return a FunctionReference
+ */
+function analyzeFunctionNode(
+  fn: t.Function,
+  name: string,
+  type: FunctionReference['type'],
+  fileImports: string[]
+): FunctionReference {
+  const referencesUser = containsReqUser(fn);
+  const callsNext = detectNextCall(fn);
+  const conditionalAuth = detectConditionalAuth(fn);
+  const rolesChecked = extractRoles(fn);
+  const jwtInfo = detectJWTVerification(fn, fileImports);
+  const hasPassport = detectPassportAuth(fn, fileImports);
+  const hasSession = detectSessionUsage(fn, fileImports);
+  const errorHandling = hasErrorHandling(fn);
+
+  return {
+    name,
+    type,
+    isAsync: !!fn.async,
+    referencesUser,
+    callsNext,
+    conditionalAuth,
+    rolesChecked,
+    hasJWTVerification: jwtInfo.hasJWT || hasPassport,
+    jwtVerifyMethod: jwtInfo.verifyMethod || (hasPassport ? 'passport' : null),
+    hasErrorHandling: errorHandling || hasPassport || hasSession,
+  };
+}
+
+/**
+ * Extract function reference with cross-file resolution support
  */
 function extractFunctionReference(
   node: t.Node,
-  fileImports: string[]
+  fileImports: string[],
+  filePath: string,
+  resolver?: FunctionResolver
 ): FunctionReference {
+  // Inline function — analyze directly
   if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
-    const referencesUser = containsReqUser(node);
-    const callsNext = detectNextCall(node);
-    const conditionalAuth = detectConditionalAuth(node);
-    const rolesChecked = extractRoles(node);
-    const jwtInfo = detectJWTVerification(node, fileImports);
-    const hasPassport = detectPassportAuth(node, fileImports);
-    const hasSession = detectSessionUsage(node, fileImports);
-    const errorHandling = hasErrorHandling(node);
-
-    return {
-      name: '<inline>',
-      type: 'inline',
-      isAsync: !!node.async,
-      referencesUser,
-      callsNext,
-      conditionalAuth,
-      rolesChecked,
-      hasJWTVerification: jwtInfo.hasJWT || hasPassport,
-      jwtVerifyMethod: jwtInfo.verifyMethod || (hasPassport ? 'passport' : null),
-      hasErrorHandling: errorHandling || hasPassport || hasSession,
-    };
+    return analyzeFunctionNode(node, '<inline>', 'inline', fileImports);
   }
 
+  // Identifier reference — try to resolve the function body
   if (t.isIdentifier(node)) {
+    if (resolver) {
+      const resolved = resolver.resolveFunction(node.name, filePath);
+      if (resolved) {
+        return analyzeFunctionNode(
+          resolved.node,
+          node.name,
+          'identifier',
+          resolved.fileImports
+        );
+      }
+    }
+
+    // Fallback: return name-only reference (no body analysis possible)
     return {
       name: node.name,
       type: 'identifier',
@@ -382,6 +326,33 @@ function extractFunctionReference(
       jwtVerifyMethod: null,
       hasErrorHandling: false,
     };
+  }
+
+  // Call expression — e.g., passport.authenticate('local')
+  if (t.isCallExpression(node)) {
+    if (
+      t.isMemberExpression(node.callee) &&
+      t.isIdentifier(node.callee.object) &&
+      t.isIdentifier(node.callee.property)
+    ) {
+      const name = `${node.callee.object.name}.${node.callee.property.name}`;
+      const isPassportAuth =
+        node.callee.object.name === 'passport' &&
+        node.callee.property.name === 'authenticate';
+
+      return {
+        name,
+        type: 'identifier',
+        isAsync: false,
+        referencesUser: false,
+        callsNext: false,
+        conditionalAuth: false,
+        rolesChecked: [],
+        hasJWTVerification: isPassportAuth,
+        jwtVerifyMethod: isPassportAuth ? 'passport' : null,
+        hasErrorHandling: isPassportAuth,
+      };
+    }
   }
 
   return {
@@ -398,18 +369,44 @@ function extractFunctionReference(
   };
 }
 
+// ─── Import extraction ─────────────────────────────────────────────
+
+function extractImports(ast: File): string[] {
+  const imports: string[] = [];
+  traverseFn(ast, {
+    ImportDeclaration(path: { node: t.ImportDeclaration }) {
+      imports.push(path.node.source.value);
+    },
+    CallExpression(path: { node: t.CallExpression }) {
+      const { node } = path;
+      if (
+        t.isIdentifier(node.callee, { name: 'require' }) &&
+        node.arguments.length === 1 &&
+        t.isStringLiteral(node.arguments[0])
+      ) {
+        imports.push(node.arguments[0].value);
+      }
+    },
+  });
+  return imports;
+}
+
+// ─── Main route extraction ─────────────────────────────────────────
+
 /**
- * Main route extraction with Phase 3 enhancements
+ * Extract Express route definitions from an AST.
+ * Supports both app.METHOD() and router.METHOD() patterns.
  */
 export function extractExpressRoutes(
   ast: File,
-  filePath: string
+  filePath: string,
+  resolver?: FunctionResolver
 ): RouteDefinition[] {
   const routes: RouteDefinition[] = [];
   const fileImports = extractImports(ast);
 
   traverseFn(ast, {
-    CallExpression(path: any) {
+    CallExpression(path: { node: t.CallExpression }) {
       const { node } = path;
 
       if (!t.isMemberExpression(node.callee)) return;
@@ -418,11 +415,17 @@ export function extractExpressRoutes(
       const method = node.callee.property.name;
       if (!HTTP_METHODS.has(method)) return;
 
-      if (!t.isIdentifier(node.callee.object)) return;
+      // Support both simple identifiers (app, router) and member expressions (this.router)
+      if (
+        !t.isIdentifier(node.callee.object) &&
+        !t.isMemberExpression(node.callee.object)
+      ) {
+        return;
+      }
 
-      // Only string literal paths (no regex/params yet)
+      // First argument must be a string literal path
       const firstArg = node.arguments[0];
-      if (!t.isStringLiteral(firstArg)) return;
+      if (!firstArg || !t.isStringLiteral(firstArg)) return;
 
       const handlers = node.arguments.slice(1);
       if (handlers.length === 0) return;
@@ -432,29 +435,34 @@ export function extractExpressRoutes(
 
       // Flatten nested middleware arrays: [auth, [validate, log]] -> [auth, validate, log]
       const flattenedHandlers: (t.Expression | t.SpreadElement)[] = [];
-      handlers.forEach((arg: any) => {
+      for (const arg of handlers) {
         if (t.isArrayExpression(arg)) {
-          flattenedHandlers.push(...arg.elements.filter((e): e is t.Expression | t.SpreadElement => e !== null));
+          flattenedHandlers.push(
+            ...arg.elements.filter(
+              (e): e is t.Expression | t.SpreadElement => e !== null
+            )
+          );
         } else {
-          flattenedHandlers.push(arg);
+          flattenedHandlers.push(arg as t.Expression | t.SpreadElement);
         }
-      });
+      }
 
-      flattenedHandlers.forEach((arg: any, index: number) => {
-        const ref = extractFunctionReference(arg, fileImports);
-        if (index === flattenedHandlers.length - 1 && method !== 'use') {
+      for (let idx = 0; idx < flattenedHandlers.length; idx++) {
+        const arg = flattenedHandlers[idx];
+        if (!arg) continue;
+        const ref = extractFunctionReference(arg, fileImports, filePath, resolver);
+        if (idx === flattenedHandlers.length - 1 && method !== 'use') {
           handler = ref;
         } else {
           middleware.push(ref);
         }
-      });
-
-      // For app.use(), all are considered middleware if no explicit handler identified
-      if (!handler && method !== 'use') return;
-      if (!handler && method === 'use' && middleware.length > 0) {
-        handler = middleware.pop()!;
       }
 
+      // For app.use(), all are considered middleware if no explicit handler
+      if (!handler && method !== 'use') return;
+      if (!handler && method === 'use' && middleware.length > 0) {
+        handler = middleware.pop() ?? null;
+      }
       if (!handler) return;
 
       routes.push({
@@ -470,4 +478,150 @@ export function extractExpressRoutes(
   });
 
   return routes;
+}
+
+// ─── Mount point extraction ────────────────────────────────────────
+
+/**
+ * Extract Router mount points: app.use('/prefix', routerVariable)
+ * These are used to compose full paths for routes defined in sub-routers.
+ */
+export function extractMountPoints(ast: File, filePath: string): MountPoint[] {
+  const mountPoints: MountPoint[] = [];
+
+  // First, detect which variables are express.Router() instances
+  const routerVars = new Set<string>();
+  traverseFn(ast, {
+    VariableDeclarator(path: { node: t.VariableDeclarator }) {
+      if (
+        t.isIdentifier(path.node.id) &&
+        t.isCallExpression(path.node.init) &&
+        t.isMemberExpression(path.node.init.callee) &&
+        t.isIdentifier(path.node.init.callee.property, { name: 'Router' })
+      ) {
+        routerVars.add(path.node.id.name);
+      }
+    },
+  });
+
+  // Find app.use('/path', routerVar) patterns
+  traverseFn(ast, {
+    CallExpression(path: { node: t.CallExpression }) {
+      const { node } = path;
+      if (!t.isMemberExpression(node.callee)) return;
+      if (!t.isIdentifier(node.callee.property, { name: 'use' })) return;
+      if (node.arguments.length < 2) return;
+
+      const pathArg = node.arguments[0];
+      const routerArg = node.arguments[1];
+
+      if (
+        t.isStringLiteral(pathArg) &&
+        routerArg &&
+        t.isIdentifier(routerArg)
+      ) {
+        // Only record as mount point if:
+        // - The identifier is a known Router variable, OR
+        // - The identifier name suggests it's a router (contains 'route' or 'router')
+        const isRouter =
+          routerVars.has(routerArg.name) ||
+          routerArg.name.toLowerCase().includes('route') ||
+          routerArg.name.toLowerCase().includes('router');
+
+        if (isRouter) {
+          mountPoints.push({
+            path: pathArg.value,
+            routerName: routerArg.name,
+            filePath,
+            line: node.loc?.start.line ?? 0,
+          });
+        }
+      } else if (node.arguments.length === 1 && pathArg && t.isIdentifier(pathArg)) {
+        // Pattern: app.use(authRoutes) mounted at root
+        const isRouter =
+          routerVars.has(pathArg.name) ||
+          pathArg.name.toLowerCase().includes('route') ||
+          pathArg.name.toLowerCase().includes('router');
+
+        if (isRouter) {
+          mountPoints.push({
+            path: '',
+            routerName: pathArg.name,
+            filePath,
+            line: node.loc?.start.line ?? 0,
+          });
+        }
+      }
+    },
+  });
+
+  return mountPoints;
+}
+
+// ─── Global middleware extraction ──────────────────────────────────
+
+/**
+ * Extract global middleware: app.use(fn) without a path argument.
+ * These are middleware applied to ALL routes.
+ */
+export function extractGlobalMiddleware(
+  ast: File,
+  filePath: string,
+  resolver?: FunctionResolver
+): GlobalMiddlewareDefinition[] {
+  const globals: GlobalMiddlewareDefinition[] = [];
+  const fileImports = extractImports(ast);
+
+  // Collect router variables in this file
+  const routerVars = new Set<string>();
+  traverseFn(ast, {
+    VariableDeclarator(path: { node: t.VariableDeclarator }) {
+      if (
+        t.isIdentifier(path.node.id) &&
+        path.node.init &&
+        t.isCallExpression(path.node.init) &&
+        t.isMemberExpression(path.node.init.callee) &&
+        t.isIdentifier(path.node.init.callee.property, { name: 'Router' })
+      ) {
+        routerVars.add(path.node.id.name);
+      }
+    },
+  });
+
+  traverseFn(ast, {
+    CallExpression(path: { node: t.CallExpression }) {
+      const { node } = path;
+      if (!t.isMemberExpression(node.callee)) return;
+      if (!t.isIdentifier(node.callee.property, { name: 'use' })) return;
+      if (!t.isIdentifier(node.callee.object)) return;
+
+      // app.use(fn) — first arg is NOT a string, so it's a global middleware
+      if (node.arguments.length === 0) return;
+      const firstArg = node.arguments[0];
+      if (!firstArg || t.isStringLiteral(firstArg)) return;
+
+      // If it's a router mounted without a path (e.g., app.use(authRoutes)), skip as middleware
+      if (t.isIdentifier(firstArg)) {
+        const name = firstArg.name.toLowerCase();
+        if (
+          routerVars.has(firstArg.name) ||
+          name.endsWith('routes') ||
+          name.endsWith('router') ||
+          name.includes('route')
+        ) {
+          return;
+        }
+      }
+
+      // It's a global middleware application
+      const ref = extractFunctionReference(firstArg, fileImports, filePath, resolver);
+      globals.push({
+        ref,
+        filePath,
+        line: node.loc?.start.line ?? 0,
+      });
+    },
+  });
+
+  return globals;
 }

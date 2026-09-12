@@ -1,5 +1,5 @@
 /**
- * Intermediate Representation (IR) - Phase 3 Enhanced
+ * Intermediate Representation (IR) — Enhanced
  * Framework-agnostic execution graph with auth semantics
  */
 
@@ -12,6 +12,18 @@ export interface ExecutionGraph {
   edges: Edge[];
   executiveSummary?: ExecutiveSummary;
   sessionMiddleware?: string[];
+  globalMiddleware?: GlobalMiddlewareEntry[];
+}
+
+/**
+ * Global middleware applied to all routes (app.use(fn) without a path)
+ */
+export interface GlobalMiddlewareEntry {
+  name: string;
+  filePath: string;
+  line: number;
+  isAuth: boolean;
+  authType?: AuthType;
 }
 
 /**
@@ -26,17 +38,17 @@ export interface Route {
 }
 
 /**
- * Phase 3: Node classification
+ * Node classification
  */
 export type NodeKind = 'middleware' | 'handler' | 'auth';
 
 /**
- * Phase 3: Authentication enforcement modes
+ * Authentication enforcement modes
  */
 export type AuthEnforcement = 'hard' | 'soft' | 'conditional' | 'none';
 
 /**
- * Phase 3: Auth middleware classification
+ * Auth middleware classification
  */
 export type AuthType =
   | 'jwt-verification'    // Validates JWT tokens
@@ -48,7 +60,7 @@ export type AuthType =
   | 'unknown';           // Detected but type unclear
 
 /**
- * Phase 3 & 4: Enhanced node metadata
+ * Enhanced node metadata
  */
 export interface NodeMetadata {
   // Basic info
@@ -57,24 +69,24 @@ export interface NodeMetadata {
   fileImports: string[];
   sourceLocation: SourceLocation;
 
-  // Phase 3: Auth classification
+  // Auth classification
   authType?: AuthType;
   enforcement?: AuthEnforcement;
 
-  // Phase 3: RBAC
+  // RBAC
   rolesChecked?: string[];
   hasRoleValidation: boolean;
 
-  // Phase 3: JWT specifics
+  // JWT specifics
   hasJWTVerification: boolean;
   jwtVerifyMethod?: string | null;
 
-  // Phase 3: Middleware behavior
+  // Middleware behavior
   callsNext: boolean;
   hasErrorHandling: boolean;
   conditionalAuth: boolean;
 
-  // Phase 4: Security findings
+  // Security findings
   findings: SecurityFinding[];
 }
 
@@ -89,7 +101,7 @@ export interface ExecutionNode {
 }
 
 /**
- * Phase 3: Enhanced edges with conditions
+ * Enhanced edges with conditions
  */
 export interface Edge {
   from: string;
@@ -106,7 +118,7 @@ export interface SourceLocation {
 }
 
 /**
- * Phase 4: Risk scoring and categories
+ * Risk scoring
  */
 export type RiskScore = number; // 0-100 score
 
@@ -119,7 +131,7 @@ export type FindingCategory =
   | 'other';
 
 /**
- * Phase 4: Code context for findings
+ * Code context for findings
  */
 export interface CodeContext {
   snippet: string;
@@ -128,7 +140,7 @@ export interface CodeContext {
 }
 
 /**
- * Phase 4: Security finding attached to nodes
+ * Security finding attached to nodes
  */
 export interface SecurityFinding {
   id: string;
@@ -144,7 +156,7 @@ export interface SecurityFinding {
 }
 
 /**
- * Phase 4: Executive summary metrics
+ * Executive summary metrics
  */
 export interface ExecutiveSummary {
   riskScore: number;
@@ -155,7 +167,7 @@ export interface ExecutiveSummary {
 }
 
 /**
- * Phase 4: Finding classification
+ * Finding classification
  */
 export type FindingType =
   | 'missing-authentication'
@@ -173,6 +185,6 @@ export type FindingType =
   | 'public-endpoint';
 
 /**
- * Phase 4: Severity levels
+ * Severity levels
  */
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';

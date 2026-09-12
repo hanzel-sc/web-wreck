@@ -1,15 +1,17 @@
 /**
- * Phase 4: Security Findings Management
+ * Security Findings Management
  * Associates security findings with graph nodes and routes
  */
 
 import type {
   ExecutionGraph,
+  ExecutionNode,
   SecurityFinding,
   Severity,
   FindingType,
 } from '../ir/types.js';
 import type { AuthAnalysis } from './authPresence.js';
+import { buildAdjacency, getOrderedExecutionChain } from '../util/graph.js';
 
 export interface FindingReport {
   summary: FindingSummary;
@@ -73,7 +75,6 @@ export function generateFindingReport(
     const route = graph.routes.find(r => r.id === routeId);
     if (!route) continue;
 
-    // Determine max severity and risk score
     const severities: Severity[] = ['info', 'low', 'medium', 'high', 'critical'];
     let maxRiskScore = 0;
     const maxSeverity = findings.reduce((max, f) => {
@@ -94,7 +95,6 @@ export function generateFindingReport(
       line: route.sourceLocation.line,
     });
 
-    // Categorize by severity and type
     for (const finding of findings) {
       const severityBucket = bySeverity.get(finding.severity) ?? [];
       severityBucket.push(finding);
@@ -107,13 +107,13 @@ export function generateFindingReport(
   }
 
   // Associate findings with nodes
+  const adjacency = buildAdjacency(graph);
   for (const route of graph.routes) {
     const routeFindings = byRoute.get(route.id);
     if (!routeFindings) continue;
 
-    const chain = getOrderedExecutionChain(graph, route.entryNodeId);
+    const chain = getOrderedExecutionChain(graph, adjacency, route.entryNodeId);
     for (const node of chain) {
-      // Add relevant findings to this node
       const nodeFindings = routeFindings.findings.filter(f =>
         isRelevantToNode(f, node.type, node.name)
       );
@@ -134,16 +134,9 @@ export function generateFindingReport(
     }
   }
 
-  // Generate summary
   const summary = generateSummary(bySeverity, byRoute, byNode);
 
-  return {
-    summary,
-    byRoute,
-    byNode,
-    bySeverity,
-    byType,
-  };
+  return { summary, byRoute, byNode, bySeverity, byType };
 }
 
 /**
@@ -175,28 +168,6 @@ function generateSummary(
 }
 
 /**
- * Get ordered execution chain via traversal
- */
-function getOrderedExecutionChain(graph: ExecutionGraph, startNodeId: string): any[] {
-  const visited = new Set<string>();
-  const result: any[] = [];
-
-  function dfs(nodeId: string) {
-    if (visited.has(nodeId)) return;
-    visited.add(nodeId);
-    const node = graph.nodes.get(nodeId);
-    if (node) result.push(node);
-
-    // Simplistic DFS for now as build.ts produces linear chains mostly
-    const outgoing = graph.edges.filter(e => e.from === nodeId);
-    for (const edge of outgoing) dfs(edge.to);
-  }
-
-  dfs(startNodeId);
-  return result;
-}
-
-/**
  * Determine if a finding is relevant to a specific node
  */
 function isRelevantToNode(
@@ -204,7 +175,6 @@ function isRelevantToNode(
   nodeType: string,
   nodeName: string
 ): boolean {
-  // Auth-related findings are relevant to auth nodes
   if (
     nodeType === 'auth' &&
     (finding.type.includes('auth') ||
@@ -214,7 +184,6 @@ function isRelevantToNode(
     return true;
   }
 
-  // Handler-related findings
   if (
     nodeType === 'handler' &&
     (finding.type === 'auth-after-handler' || finding.type === 'missing-rbac')
@@ -222,7 +191,6 @@ function isRelevantToNode(
     return true;
   }
 
-  // Check if finding message mentions the node
   if (finding.message.includes(nodeName)) {
     return true;
   }
@@ -248,7 +216,6 @@ export function exportFindingsMarkdown(report: FindingReport): string {
   lines.push(`- **Affected Routes**: ${report.summary.affectedRoutes}`);
   lines.push('');
 
-  // Findings by severity
   lines.push('## Findings by Severity');
   lines.push('');
 
@@ -271,11 +238,10 @@ export function exportFindingsMarkdown(report: FindingReport): string {
     }
   }
 
-  // Findings by route
   lines.push('## Findings by Route');
   lines.push('');
 
-  for (const [_, routeFinding] of report.byRoute) {
+  for (const [, routeFinding] of report.byRoute) {
     lines.push(
       `### ${routeFinding.method} ${routeFinding.path} [${routeFinding.maxSeverity.toUpperCase()}]`
     );

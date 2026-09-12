@@ -1,9 +1,11 @@
 /**
- * JSON output serialization - Phase 3 & 4 Enhanced
+ * JSON output serialization — Enhanced
+ * Accepts repo URL for proper metadata.
  */
 
 import type { ExecutionGraph } from '../ir/types.js';
 import type { AuthAnalysis } from '../analyze/authPresence.js';
+import type { SecurityReport } from '../analyze/report.js';
 
 export interface JsonOutput {
   metadata: {
@@ -54,13 +56,14 @@ export interface JsonOutput {
 export function outputJson(
   graph: ExecutionGraph,
   analysis: AuthAnalysis,
-  report: any // SecurityReport
+  report: SecurityReport,
+  repoUrl: string = 'unknown'
 ): JsonOutput {
   return {
     metadata: {
-      version: '0.4.0',
+      version: '0.1.0',
       timestamp: new Date().toISOString(),
-      repository: 'analyzed-repository',
+      repository: repoUrl,
     },
     executiveSummary: {
       riskScore: report.summary.riskScore,
@@ -97,32 +100,10 @@ export function outputJson(
         })),
       };
     }),
-    remediationPlan: report.remediationPlan.map((rp: any) => ({
+    remediationPlan: report.remediationPlan.map(rp => ({
       priority: rp.priority,
       issue: rp.issue,
       remediation: rp.remediation,
     })),
   };
-}
-
-/**
- * Get route execution chain
- */
-function getRouteChain(graph: ExecutionGraph, startNodeId: string): string[] {
-  const visited = new Set<string>();
-  const result: string[] = [];
-
-  function dfs(nodeId: string) {
-    if (visited.has(nodeId)) return;
-    visited.add(nodeId);
-    result.push(nodeId);
-
-    const outgoing = graph.edges.filter(e => e.from === nodeId);
-    for (const edge of outgoing) {
-      dfs(edge.to);
-    }
-  }
-
-  dfs(startNodeId);
-  return result;
 }
